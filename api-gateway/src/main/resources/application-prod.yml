@@ -1,0 +1,238 @@
+# Production Environment Configuration
+server:
+  port: 80
+  forward-headers-strategy: framework
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+    min-response-size: 1024
+
+spring:
+  application:
+    name: api-gateway-prod
+
+  # Production CORS Configuration
+  web:
+    cors:
+      allowed-origins: "https://school.upvalley.co.zw,https://admin.upvalley.co.zw"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "Authorization,Content-Type,X-API-Key,X-Request-ID"
+      exposed-headers: "X-Rate-Limit-Limit,X-Rate-Limit-Remaining,X-Rate-Limit-Reset"
+      allow-credentials: true
+      max-age: 7200
+
+  # Cloud Gateway Configuration
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+      httpclient:
+        connect-timeout: 1000
+        response-timeout: 10s
+
+      routes:
+        # Auth Service
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/**,/api/v1/auth/**
+          filters:
+            - StripPrefix=0
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                key-resolver: "#{@userKeyResolver}"
+            - name: CircuitBreaker
+              args:
+                name: authService
+                fallbackUri: forward:/fallback/service-unavailable
+            - AddRequestHeader=X-Forwarded-Proto, https
+            - SecureHeaders
+            - SetResponseHeader=X-Content-Type-Options, nosniff
+            - SetResponseHeader=X-Frame-Options, DENY
+            - SetResponseHeader=X-XSS-Protection, 1; mode=block
+
+        # Health Checks Only
+        - id: actuator-health
+          uri: lb://auth-service
+          predicates:
+            - Path=/actuator/health
+          filters:
+            - StripPrefix=0
+            - AddRequestHeader=X-Internal-Request, true
+
+        # Timetable Service
+        - id: timetable-service
+          uri: lb://timetable-service
+          predicates:
+            - Path=/api/v1/timetable/**,/timetable/**
+          filters:
+            - StripPrefix=0
+            - name: JwtAuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 60
+                key-resolver: "#{@userKeyResolver}"
+
+        # User Service
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/users/**,/users/**
+          filters:
+            - StripPrefix=0
+            - name: JwtAuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 60
+                key-resolver: "#{@userKeyResolver}"
+
+  # Production Redis Cluster
+  data:
+    redis:
+      host: ${REDIS_HOST:redis-cluster}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000ms
+      connect-timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 2000ms
+          time-between-eviction-runs: 30000ms
+
+# Production JWT Configuration (MUST be set via environment variable)
+app:
+  jwt:
+    secret: ${JWT_SECRET:}
+  rate-limit:
+    replenish-rate: 50
+    burst-capacity: 100
+    requests-per-ip-per-second: 20
+
+# Production Eureka
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://service-discovery:4000/eureka/}
+    registry-fetch-interval-seconds: 10
+    instance-info-replication-interval-seconds: 30
+    eureka-service-url-poll-interval-seconds: 300
+  instance:
+    hostname: ${HOSTNAME:api-gateway}
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 30
+    lease-expiration-duration-in-seconds: 90
+    metadata-map:
+      zone: ${AWS_REGION:us-east-1}
+      environment: production
+      version: ${APP_VERSION:1.0.0}
+
+# Production Management (Secured)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+      base-path: /internal/admin
+      path-mapping:
+        health: status
+      cors:
+        allowed-origins: "https://monitoring.upvalley.co.zw"
+        allowed-methods: "GET"
+    jmx:
+      exposure:
+        exclude: "*"
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+        step: 30s
+  metrics:
+    export:
+      cloudwatch:
+        enabled: true
+        namespace: ISTMS/API-Gateway
+        batch-size: 20
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      sla:
+        http.server.requests: 100ms, 500ms, 1s
+  tracing:
+    sampling:
+      probability: 0.1
+
+# Production Logging (Structured JSON for CloudWatch/ELK)
+logging:
+  level:
+    root: WARN
+    zw.co.upvalley.apigateway: INFO
+    org.springframework.cloud.gateway: WARN
+    org.springframework.web: WARN
+    org.springframework.security: WARN
+    reactor.netty: WARN
+  pattern:
+    console: '{"timestamp":"%d{yyyy-MM-dd HH:mm:ss.SSS}","level":"%level","service":"${spring.application.name}","thread":"%thread","logger":"%logger","message":"%message","exception":"%exception"}'
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 1GB
+      clean-history-on-start: false
+  file:
+    name: /var/log/istms/api-gateway.log
+
+# Production Circuit Breaker (Aggressive)
+resilience4j:
+  circuitbreaker:
+    instances:
+      authService:
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        permitted-number-of-calls-in-half-open-state: 5
+        wait-duration-in-open-state: 10s
+        failure-rate-threshold: 60
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+      timetableService:
+        sliding-window-size: 15
+        minimum-number-of-calls: 8
+        wait-duration-in-open-state: 15s
+        failure-rate-threshold: 70
+  retry:
+    instances:
+      default:
+        max-attempts: 2
+        wait-duration: 500ms
+        retry-exceptions:
+          - org.springframework.web.client.ResourceAccessException
+          - java.net.SocketTimeoutException
+  timelimiter:
+    instances:
+      default:
+        timeout-duration: 5s
+        cancel-running-future: true

@@ -1,0 +1,297 @@
+server:
+  port: 4001
+  forward-headers-strategy: framework
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+    min-response-size: 1024
+  servlet:
+    session:
+      timeout: 30m
+
+spring:
+  application:
+    name: api-gateway-dev
+
+  cloud:
+    gateway:
+      # CORS Configuration
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins:
+              - "http://localhost:3000"
+              - "http://localhost:4200"
+              - "http://localhost:8080"
+              - "http://localhost:4000"
+              - "http://localhost:4001"
+            allowed-methods:
+              - "GET"
+              - "POST"
+              - "PUT"
+              - "DELETE"
+              - "OPTIONS"
+              - "PATCH"
+              - "HEAD"
+            allowed-headers:
+              - "*"
+            exposed-headers:
+              - "Authorization"
+              - "X-Request-ID"
+              - "X-Rate-Limit-Remaining"
+              - "Content-Type"
+              - "Cache-Control"
+            allow-credentials: true
+            max-age: 3600
+
+      # Service Discovery
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+      # Routes Configuration
+      routes:
+        # ==============================================
+        # EUREKA DASHBOARD - FIXED ROUTING (No redirect loops)
+        # ==============================================
+        # Eureka Dashboard - Simple route without redirect
+        - id: eureka-dashboard
+          uri: http://localhost:4000
+          predicates:
+            - Path=/eureka,/eureka/**
+          filters:
+            - RewritePath=/eureka(?<segment>/.*)?, /$\{segment}
+            - name: CircuitBreaker
+              args:
+                name: eurekaDashboard
+                fallbackUri: forward:/fallback/eureka-unavailable
+            # Add caching headers for static resources
+            - name: AddResponseHeader
+              args:
+                name: Cache-Control
+                value: "public, max-age=3600"
+
+        # ==============================================
+        # AUTH SERVICE
+        # ==============================================
+        - id: auth-service
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/auth/**,/api/v1/auth/**
+          filters:
+            - StripPrefix=0
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@ipKeyResolver}"
+            - name: CircuitBreaker
+              args:
+                name: authService
+                fallbackUri: forward:/fallback/service-unavailable
+            - name: Retry
+              args:
+                retries: 3
+                series: SERVER_ERROR
+                methods: GET,POST
+                exceptions:
+                  - java.io.IOException
+                  - org.springframework.cloud.gateway.support.NotFoundException
+
+        # ==============================================
+        # API DOCUMENTATION (SWAGGER)
+        # ==============================================
+        - id: swagger-ui
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/swagger-ui.html,/v3/api-docs/**,/api-docs/**
+          filters:
+            - StripPrefix=0
+
+        # ==============================================
+        # GATEWAY'S OWN ACTUATOR ENDPOINTS
+        # ==============================================
+        - id: gateway-actuator
+          uri: http://localhost:${server.port}
+          predicates:
+            - Path=/actuator/**
+
+        # ==============================================
+        # FALLBACK ENDPOINTS
+        # ==============================================
+        - id: fallback-eureka-unavailable
+          uri: http://localhost:${server.port}
+          predicates:
+            - Path=/fallback/eureka-unavailable
+          filters:
+            - SetStatus=503
+            - SetResponseHeader=Content-Type, text/html
+            - SetResponseHeader=Retry-After, 30
+
+        - id: fallback-service-unavailable
+          uri: http://localhost:${server.port}
+          predicates:
+            - Path=/fallback/service-unavailable
+          filters:
+            - SetStatus=503
+            - SetResponseHeader=Content-Type, application/json
+
+        # ==============================================
+        # FUTURE SERVICES
+        # ==============================================
+        # Timetable Service
+        - id: timetable-service
+          uri: lb://timetable-service
+          predicates:
+            - Path=/api/v1/timetable/**,/timetable/**
+          filters:
+            - StripPrefix=0
+            #- name: JwtAuthenticationFilter
+
+        # User Service
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/users/**,/users/**
+          filters:
+            - StripPrefix=0
+            #- name: JwtAuthenticationFilter
+
+      # HTTP client configuration for better proxy performance
+      httpclient:
+        connect-timeout: 1000
+        response-timeout: 5000
+        pool:
+          type: fixed
+          max-connections: 20
+          acquire-timeout: 10000
+
+  # Redis Configuration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      connect-timeout: 1000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 2
+          max-wait: 1000ms
+
+# Application Properties
+app:
+  jwt:
+    secret: ${JWT_SECRET:gMLy0Vs4r6OtnZABcN6AbTxJafpF9BHkK9IUTPwG4XI=}
+
+# Eureka Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:4000/eureka/}
+    registry-fetch-interval-seconds: 5
+    fetch-registry: true
+    register-with-eureka: true
+    enabled: true
+  instance:
+    prefer-ip-address: false
+    hostname: localhost
+    instance-id: ${spring.application.name}:${server.port}
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+    status-page-url: http://localhost:${server.port}/actuator/health
+    health-check-url: http://localhost:${server.port}/actuator/health
+    home-page-url: http://localhost:${server.port}
+    metadata-map:
+      management.port: ${server.port}
+      zone: default
+
+# Management Endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway,loggers,prometheus
+      base-path: /actuator
+      cors:
+        allowed-origins:
+          - "http://localhost:3000"
+          - "http://localhost:4200"
+          - "http://localhost:8080"
+          - "http://localhost:4000"
+          - "http://localhost:4001"
+        allowed-methods: GET,POST
+        allow-credentials: true
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: dev
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+    redis:
+      enabled: true
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    zw.co.upvalley.apigateway: DEBUG
+    org.springframework.cloud.gateway: TRACE
+    org.springframework.cloud.netflix.eureka: DEBUG
+    com.netflix.eureka: DEBUG
+    org.springframework.web: TRACE
+    reactor.netty.http.client: DEBUG
+    reactor.netty: DEBUG
+    org.springframework.cloud.gateway.handler.RoutePredicateHandlerMapping: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [thread] %-5level %logger{40} - %msg%n"
+  file:
+    name: logs/api-gateway-dev.log
+    max-size: 10MB
+    max-history: 7
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        wait-duration-in-open-state: 5s
+        failure-rate-threshold: 50
+    instances:
+      authService:
+        base-config: default
+      eurekaDashboard:
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 30
+        wait-duration-in-open-state: 10s
+  retry:
+    instances:
+      authService:
+        max-attempts: 3
+        wait-duration: 1s
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+    instances:
+      authService:
+        base-config: default
+      eurekaDashboard:
+        timeout-duration: 10s

@@ -1,0 +1,33 @@
+# Development-specific configuration
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/istms_auth_db
+    username: sa
+    password: P@55vv0rd
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# Development JWT Settings
+app:
+  security:
+    jwt:
+      secret: gMLy0Vs4r6OtnZABcN6AbTxJafpF9BHkK9IUTPwG4XI=
+      access-token-expiration-ms: 900000    # 15 minutes
+      refresh-token-expiration-ms: 604800000 # 7 days
+    max-login-attempts: 5
+    account-lock-duration-minutes: 30
+
+# Development logging
+logging:
+  level:
+    zw.co.upvalley.authservice: DEBUG
+    org.springframework.security: DEBUG

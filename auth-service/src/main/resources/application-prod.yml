@@ -1,0 +1,55 @@
+# Production-specific configuration
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/istms_auth_db}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      max-lifetime: 300000
+      idle-timeout: 300000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Critical for production - never use 'update'
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+
+# Production JWT Settings - SECRET MUST COME FROM ENVIRONMENT
+app:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:} # REQUIRED - must be set via environment variable
+      access-token-expiration-ms: 900000    # 15 minutes
+      refresh-token-expiration-ms: 604800000 # 7 days
+    max-login-attempts: 5
+    account-lock-duration-minutes: 30
+
+# Production logging
+logging:
+  level:
+    zw.co.upvalley.authservice: INFO
+    org.springframework.security: WARN
+    org.springframework.web: WARN
+  file:
+    name: /app/logs/auth-service.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Production Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+      show-components: when_authorized

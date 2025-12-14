@@ -1,0 +1,40 @@
+# Main application configuration
+server:
+  port: 4002
+  servlet:
+    context-path: /auth
+
+spring:
+  application:
+    name: auth-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}  # Use 'prod' in production
+  config:
+    import: optional:file:.env[.properties]  # Load from .env file if exists
+
+# Eureka Service Discovery
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:4000/eureka/}
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port}
+
+# Swagger Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# Default JWT configuration (overridden by profile-specific files)
+app:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:} # Must be provided via environment
+      access-token-expiration-ms: 900000
+      refresh-token-expiration-ms: 604800000
+    max-login-attempts: 5
+    account-lock-duration-minutes: 30
