@@ -377,8 +377,9 @@ Redis
 PostgreSQL
 
 📞 Contact
-Project Maintainer: [Your Name]
-Email: your.email@example.com
+Project Maintainer: Upvalley Dev Team
+Email: dev@upvalley.co.zw
+Mobile: +263 7726 654 35
 Website: https://upvalley.co.zw
 
 Project Link: https://github.com/yourusername/intelligent-school-timetable-platform
